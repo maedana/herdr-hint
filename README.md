@@ -1,6 +1,6 @@
 # herdr-hint
 
-Vimium-style hint labels for [Herdr](https://herdr.dev). Press a key to see all tabs and agents with `a`-`z` labels, then press the label to jump.
+Vimium-style hint labels for [Herdr](https://herdr.dev). Press a key to see all tabs and agents with labels, then press the label to jump.
 
 ## Install
 
@@ -32,10 +32,12 @@ herdr server reload-config
 
 Press `prefix+f` to open the hint popup.
 
-- Tabs are grouped by workspace
-- Agents show `repo:branch` and status
-- Press a label key (`a`-`z`) to jump
-- Press `Esc` to cancel
+- Tabs are grouped by workspace and displayed in two columns
+- Agents show `repo:branch`, status, and terminal title (dimmed)
+- With 26 or fewer items, labels are single-char (`a`-`z`)
+- With more than 26 items, all labels switch to double-char (`aa`-`zz`) — press two keys to jump
+- `Ctrl+D` / `Ctrl+U` to scroll half a page down/up when items overflow
+- `Esc` to cancel
 
 ## Local development
 
