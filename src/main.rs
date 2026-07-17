@@ -6,7 +6,7 @@ use crossterm::terminal;
 
 use herdr_hint::{
     assign_labels, git_context, parse_agents, parse_tabs, parse_workspace_labels, render,
-    resolve_input, HintKind,
+    resolve_input, uses_double_labels, HintKind,
 };
 
 fn herdr_bin() -> String {
@@ -53,10 +53,23 @@ fn main() {
     print!("{output}");
     io::stdout().flush().unwrap();
 
+    let double = uses_double_labels(&items);
+
     let selected = loop {
         if let Ok(Event::Key(KeyEvent { code, .. })) = event::read() {
             match code {
-                KeyCode::Char(ch) => break resolve_input(&items, ch).cloned(),
+                KeyCode::Char(first) if double => {
+                    if let Ok(Event::Key(KeyEvent { code: KeyCode::Char(second), .. })) = event::read() {
+                        let input = format!("{first}{second}");
+                        break resolve_input(&items, &input).cloned();
+                    } else {
+                        break None;
+                    }
+                }
+                KeyCode::Char(ch) => {
+                    let input = String::from(ch);
+                    break resolve_input(&items, &input).cloned();
+                }
                 KeyCode::Esc => break None,
                 _ => {}
             }

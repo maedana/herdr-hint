@@ -8,7 +8,7 @@ pub enum HintKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HintItem {
-    pub label: char,
+    pub label: String,
     pub kind: HintKind,
     pub target_id: String,
     pub display_name: String,
@@ -77,7 +77,7 @@ pub fn parse_tabs(json: &str, workspace_labels: &[(String, String)]) -> Vec<Hint
                     .find(|(id, _)| id == &t.workspace_id)
                     .map(|(_, label)| label.clone());
                 HintItem {
-                    label: ' ',
+                    label: String::new(),
                     kind: HintKind::Tab,
                     target_id: t.tab_id,
                     display_name: t.label,
@@ -104,7 +104,7 @@ pub fn parse_agents(json: &str, resolve_context: &dyn Fn(&str) -> Option<String>
                     .unwrap_or_else(|| a.terminal_id.clone());
                 let context = a.cwd.as_deref().and_then(|cwd| resolve_context(cwd));
                 HintItem {
-                    label: ' ',
+                    label: String::new(),
                     kind: HintKind::Agent,
                     target_id: a.terminal_id,
                     display_name,
@@ -140,14 +140,27 @@ pub fn git_context(cwd: &str) -> Option<String> {
     Some(format!("{repo_name}:{branch}"))
 }
 
+fn single_label(i: usize) -> String {
+    String::from((b'a' + i as u8) as char)
+}
+
+fn double_label(i: usize) -> String {
+    let first = (b'a' + (i / 26) as u8) as char;
+    let second = (b'a' + (i % 26) as u8) as char;
+    format!("{first}{second}")
+}
+
 pub fn assign_labels(tabs: Vec<HintItem>, agents: Vec<HintItem>) -> Vec<HintItem> {
-    tabs.into_iter()
-        .chain(agents)
+    let all: Vec<_> = tabs.into_iter().chain(agents).collect();
+    let use_double = all.len() > 26;
+    all.into_iter()
         .enumerate()
         .map(|(i, mut item)| {
-            if i < 26 {
-                item.label = (b'a' + i as u8) as char;
-            }
+            item.label = if use_double {
+                double_label(i)
+            } else {
+                single_label(i)
+            };
             item
         })
         .collect()
@@ -233,8 +246,12 @@ pub fn render(items: &[HintItem]) -> String {
     out
 }
 
-pub fn resolve_input(items: &[HintItem], ch: char) -> Option<&HintItem> {
-    items.iter().find(|item| item.label == ch)
+pub fn resolve_input<'a>(items: &'a [HintItem], input: &str) -> Option<&'a HintItem> {
+    items.iter().find(|item| item.label == input)
+}
+
+pub fn uses_double_labels(items: &[HintItem]) -> bool {
+    items.first().map_or(false, |item| item.label.len() > 1)
 }
 
 #[cfg(test)]
@@ -243,7 +260,7 @@ mod tests {
 
     fn tab(target_id: &str, name: &str, group: &str, focused: bool) -> HintItem {
         HintItem {
-            label: ' ',
+            label: String::new(),
             kind: HintKind::Tab,
             target_id: target_id.into(),
             display_name: name.into(),
@@ -256,7 +273,7 @@ mod tests {
 
     fn agent(target_id: &str, name: &str, status: &str, context: Option<&str>) -> HintItem {
         HintItem {
-            label: ' ',
+            label: String::new(),
             kind: HintKind::Agent,
             target_id: target_id.into(),
             display_name: name.into(),
@@ -314,15 +331,15 @@ mod tests {
         let items = assign_labels(tabs, agents);
 
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0].label, 'a');
+        assert_eq!(items[0].label, "a");
         assert_eq!(items[0].kind, HintKind::Tab);
-        assert_eq!(items[1].label, 'b');
+        assert_eq!(items[1].label, "b");
         assert_eq!(items[1].kind, HintKind::Agent);
-        assert_eq!(items[2].label, 'c');
+        assert_eq!(items[2].label, "c");
     }
 
     #[test]
-    fn assign_labels_caps_at_26() {
+    fn assign_labels_double_when_over_26() {
         let tabs: Vec<HintItem> = (0..30)
             .map(|i| tab(&format!("t-{i}"), &format!("tab-{i}"), "ws", false))
             .collect();
@@ -330,13 +347,15 @@ mod tests {
         let items = assign_labels(tabs, vec![]);
 
         assert_eq!(items.len(), 30);
-        assert_eq!(items[0].label, 'a');
-        assert_eq!(items[25].label, 'z');
-        assert_eq!(items[26].label, ' ');
+        assert_eq!(items[0].label, "aa");
+        assert_eq!(items[1].label, "ab");
+        assert_eq!(items[25].label, "az");
+        assert_eq!(items[26].label, "ba");
+        assert_eq!(items[29].label, "bd");
     }
 
     #[test]
-    fn assign_labels_agents_shown_without_label() {
+    fn assign_labels_all_double_when_agents_push_over_26() {
         let tabs: Vec<HintItem> = (0..26)
             .map(|i| tab(&format!("t-{i}"), &format!("{i}"), "ws", false))
             .collect();
@@ -345,34 +364,35 @@ mod tests {
         let items = assign_labels(tabs, agents);
 
         assert_eq!(items.len(), 27);
-        assert_eq!(items[26].label, ' ');
+        assert_eq!(items[0].label, "aa");
+        assert_eq!(items[26].label, "ba");
         assert_eq!(items[26].kind, HintKind::Agent);
     }
 
     #[test]
     fn resolve_input_finds_matching_item() {
         let items = vec![
-            HintItem { label: 'a', ..tab("w7:t1", "1", "herdr", true) },
-            HintItem { label: 'b', ..agent("term-1", "claude", "idle", None) },
+            HintItem { label: "a".into(), ..tab("w7:t1", "1", "herdr", true) },
+            HintItem { label: "b".into(), ..agent("term-1", "claude", "idle", None) },
         ];
 
-        let found = resolve_input(&items, 'b');
+        let found = resolve_input(&items, "b");
         assert_eq!(found.unwrap().target_id, "term-1");
     }
 
     #[test]
     fn resolve_input_returns_none_for_unknown_key() {
-        let items = vec![HintItem { label: 'a', ..tab("w7:t1", "1", "herdr", false) }];
-        assert!(resolve_input(&items, 'z').is_none());
+        let items = vec![HintItem { label: "a".into(), ..tab("w7:t1", "1", "herdr", false) }];
+        assert!(resolve_input(&items, "z").is_none());
     }
 
     #[test]
     fn render_groups_tabs_by_workspace() {
         let items = vec![
-            HintItem { label: 'a', ..tab("w7:t1", "1", "herdr", true) },
-            HintItem { label: 'b', ..tab("w7:t2", "2", "herdr", false) },
-            HintItem { label: 'c', ..tab("w9:t1", "1", "ga-pms", false) },
-            HintItem { label: 'd', ..agent("term-1", "claude", "working", Some("herdr:main")) },
+            HintItem { label: "a".into(), ..tab("w7:t1", "1", "herdr", true) },
+            HintItem { label: "b".into(), ..tab("w7:t2", "2", "herdr", false) },
+            HintItem { label: "c".into(), ..tab("w9:t1", "1", "ga-pms", false) },
+            HintItem { label: "d".into(), ..agent("term-1", "claude", "working", Some("herdr:main")) },
         ];
 
         let output = render(&items);
@@ -418,10 +438,10 @@ mod tests {
     #[test]
     fn render_tabs_in_two_columns() {
         let items = vec![
-            HintItem { label: 'a', ..tab("w7:t1", "1", "herdr", true) },
-            HintItem { label: 'b', ..tab("w7:t2", "2", "herdr", false) },
-            HintItem { label: 'c', ..tab("w7:t3", "3", "herdr", false) },
-            HintItem { label: 'd', ..tab("w7:t4", "4", "herdr", false) },
+            HintItem { label: "a".into(), ..tab("w7:t1", "1", "herdr", true) },
+            HintItem { label: "b".into(), ..tab("w7:t2", "2", "herdr", false) },
+            HintItem { label: "c".into(), ..tab("w7:t3", "3", "herdr", false) },
+            HintItem { label: "d".into(), ..tab("w7:t4", "4", "herdr", false) },
         ];
 
         let output = render(&items);
@@ -436,9 +456,9 @@ mod tests {
     #[test]
     fn render_tabs_two_columns_odd_count() {
         let items = vec![
-            HintItem { label: 'a', ..tab("w7:t1", "1", "herdr", false) },
-            HintItem { label: 'b', ..tab("w7:t2", "2", "herdr", false) },
-            HintItem { label: 'c', ..tab("w7:t3", "3", "herdr", false) },
+            HintItem { label: "a".into(), ..tab("w7:t1", "1", "herdr", false) },
+            HintItem { label: "b".into(), ..tab("w7:t2", "2", "herdr", false) },
+            HintItem { label: "c".into(), ..tab("w7:t3", "3", "herdr", false) },
         ];
 
         let output = render(&items);
@@ -453,8 +473,8 @@ mod tests {
     #[test]
     fn render_agents_shows_context() {
         let items = vec![
-            HintItem { label: 'a', ..agent("term-1", "claude", "idle", Some("herdr:main")) },
-            HintItem { label: 'b', ..agent("term-2", "claude", "idle", Some("ga-pms:feature")) },
+            HintItem { label: "a".into(), ..agent("term-1", "claude", "idle", Some("herdr:main")) },
+            HintItem { label: "b".into(), ..agent("term-2", "claude", "idle", Some("ga-pms:feature")) },
         ];
 
         let output = render(&items);
@@ -466,9 +486,9 @@ mod tests {
     #[test]
     fn render_agents_in_two_columns() {
         let items = vec![
-            HintItem { label: 'a', ..agent("term-1", "claude", "idle", Some("herdr:main")) },
-            HintItem { label: 'b', ..agent("term-2", "claude", "working", Some("ga-pms:feat")) },
-            HintItem { label: 'c', ..agent("term-3", "codex", "idle", None) },
+            HintItem { label: "a".into(), ..agent("term-1", "claude", "idle", Some("herdr:main")) },
+            HintItem { label: "b".into(), ..agent("term-2", "claude", "working", Some("ga-pms:feat")) },
+            HintItem { label: "c".into(), ..agent("term-3", "codex", "idle", None) },
         ];
 
         let output = render(&items);
