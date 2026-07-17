@@ -1,0 +1,14 @@
+id = "maedana.hint"
+name = "Hint"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Vimium-style hint labels to jump to any workspace or agent"
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "jump"
+title = "Hint Jump"
+placement = "popup"
+width = "60%"
+height = "50%"
+command = ["cargo", "run", "--quiet"]
