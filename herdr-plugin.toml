@@ -14,4 +14,4 @@ title = "Hint Jump"
 placement = "popup"
 width = "60%"
 height = "50%"
-command = ["target/release/herdr-hint"]
+command = ["sh", "-c", "${HERDR_PLUGIN_ROOT}/target/release/herdr-hint"]
