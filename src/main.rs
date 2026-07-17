@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use std::process::Command;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal;
 
 use herdr_hint::{
@@ -46,19 +46,40 @@ fn main() {
     }
 
     let output = render(&items);
+    let lines: Vec<&str> = output.split("\r\n").collect();
+    let (_, term_height) = terminal::size().unwrap_or((80, 24));
+    let visible = (term_height as usize).saturating_sub(1);
+    let max_offset = lines.len().saturating_sub(visible);
+    let mut offset: usize = 0;
+
+    let draw = |offset: usize| {
+        print!("\x1b[2J\x1b[H");
+        let end = (offset + visible).min(lines.len());
+        for line in &lines[offset..end] {
+            print!("{line}\r\n");
+        }
+        io::stdout().flush().unwrap();
+    };
 
     terminal::enable_raw_mode().expect("failed to enable raw mode");
-
-    print!("\x1b[?25l\x1b[2J\x1b[H");
-    print!("{output}");
+    print!("\x1b[?25l");
     io::stdout().flush().unwrap();
+    draw(offset);
 
     let double = uses_double_labels(&items);
 
     let selected = loop {
-        if let Ok(Event::Key(KeyEvent { code, .. })) = event::read() {
-            match code {
-                KeyCode::Char(first) if double => {
+        if let Ok(Event::Key(KeyEvent { code, modifiers, .. })) = event::read() {
+            match (code, modifiers) {
+                (KeyCode::Char('d'), m) if m.contains(KeyModifiers::CONTROL) => {
+                    offset = (offset + visible / 2).min(max_offset);
+                    draw(offset);
+                }
+                (KeyCode::Char('u'), m) if m.contains(KeyModifiers::CONTROL) => {
+                    offset = offset.saturating_sub(visible / 2);
+                    draw(offset);
+                }
+                (KeyCode::Char(first), _) if double => {
                     if let Ok(Event::Key(KeyEvent { code: KeyCode::Char(second), .. })) = event::read() {
                         let input = format!("{first}{second}");
                         break resolve_input(&items, &input).cloned();
@@ -66,11 +87,11 @@ fn main() {
                         break None;
                     }
                 }
-                KeyCode::Char(ch) => {
+                (KeyCode::Char(ch), _) => {
                     let input = String::from(ch);
                     break resolve_input(&items, &input).cloned();
                 }
-                KeyCode::Esc => break None,
+                (KeyCode::Esc, _) => break None,
                 _ => {}
             }
         }
