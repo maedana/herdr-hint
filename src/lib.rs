@@ -123,16 +123,41 @@ pub fn parse_agents(json: &str, resolve_context: &dyn Fn(&str) -> Option<String>
     }
 }
 
+fn repo_name_from_paths(toplevel: &str, common_dir: Option<&str>) -> Option<String> {
+    if let Some(cd) = common_dir {
+        if cd.starts_with('/') {
+            if let Some(name) = std::path::Path::new(cd)
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+            {
+                return Some(name.to_string());
+            }
+        }
+    }
+    std::path::Path::new(toplevel)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+}
+
 pub fn git_context(cwd: &str) -> Option<String> {
     use std::process::Command;
-    let repo = Command::new("git")
+    let toplevel = Command::new("git")
         .args(["-C", cwd, "rev-parse", "--show-toplevel"])
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())?;
 
-    let repo_name = std::path::Path::new(&repo).file_name()?.to_str()?;
+    let common_dir = Command::new("git")
+        .args(["-C", cwd, "rev-parse", "--git-common-dir"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    let repo_name = repo_name_from_paths(&toplevel, common_dir.as_deref())?;
 
     let branch = Command::new("git")
         .args(["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"])
@@ -468,6 +493,27 @@ mod tests {
         assert!(row1.contains("[b]"), "First row should contain both [a] and [b]");
         let row2 = lines.iter().find(|l| l.contains("[c]")).unwrap();
         assert!(!row2.contains("[a]") && !row2.contains("[b]"), "[c] should be alone");
+    }
+
+    #[test]
+    fn repo_name_from_paths_normal_repo() {
+        let name = repo_name_from_paths("/home/user/ga-pms", Some(".git"));
+        assert_eq!(name, Some("ga-pms".to_string()));
+    }
+
+    #[test]
+    fn repo_name_from_paths_worktree() {
+        let name = repo_name_from_paths(
+            "/tmp/worktrees/research",
+            Some("/home/user/ga-pms/.git"),
+        );
+        assert_eq!(name, Some("ga-pms".to_string()));
+    }
+
+    #[test]
+    fn repo_name_from_paths_no_common_dir() {
+        let name = repo_name_from_paths("/home/user/my-repo", None);
+        assert_eq!(name, Some("my-repo".to_string()));
     }
 
     #[test]
