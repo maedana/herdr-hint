@@ -5,7 +5,8 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal;
 
 use herdr_hint::{
-    assign_labels, git_context, parse_agents, parse_workspaces, render, resolve_input, HintKind,
+    assign_labels, git_context, parse_agents, parse_tabs, parse_workspace_labels, render,
+    resolve_input, HintKind,
 };
 
 fn herdr_bin() -> String {
@@ -24,15 +25,21 @@ fn fetch_json(herdr: &str, args: &[&str]) -> Option<String> {
 fn main() {
     let herdr = herdr_bin();
 
-    let workspaces = fetch_json(&herdr, &["workspace", "list"])
-        .map(|json| parse_workspaces(&json))
+    let ws_json = fetch_json(&herdr, &["workspace", "list"]);
+    let workspace_labels = ws_json
+        .as_deref()
+        .map(parse_workspace_labels)
+        .unwrap_or_default();
+
+    let tabs = fetch_json(&herdr, &["tab", "list"])
+        .map(|json| parse_tabs(&json, &workspace_labels))
         .unwrap_or_default();
 
     let agents = fetch_json(&herdr, &["agent", "list"])
         .map(|json| parse_agents(&json, &git_context))
         .unwrap_or_default();
 
-    let items = assign_labels(workspaces, agents);
+    let items = assign_labels(tabs, agents);
 
     if items.is_empty() {
         return;
@@ -60,7 +67,7 @@ fn main() {
 
     if let Some(item) = selected {
         let (cmd, target) = match item.kind {
-            HintKind::Workspace => ("workspace", item.target_id.as_str()),
+            HintKind::Tab => ("tab", item.target_id.as_str()),
             HintKind::Agent => ("agent", item.target_id.as_str()),
         };
         let _ = Command::new(&herdr)
