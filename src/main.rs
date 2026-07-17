@@ -4,7 +4,10 @@ use std::process::Command;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal;
 
-use herdr_hint::{assign_labels, parse_agents, parse_workspaces, render, resolve_input, HintKind};
+use herdr_hint::{
+    assign_labels, parse_agents, parse_workspace_labels, parse_workspaces, render, resolve_input,
+    HintKind,
+};
 
 fn herdr_bin() -> String {
     std::env::var("HERDR_BIN_PATH").unwrap_or_else(|_| "herdr".into())
@@ -22,12 +25,20 @@ fn fetch_json(herdr: &str, args: &[&str]) -> Option<String> {
 fn main() {
     let herdr = herdr_bin();
 
-    let workspaces = fetch_json(&herdr, &["workspace", "list"])
-        .map(|json| parse_workspaces(&json))
+    let ws_json = fetch_json(&herdr, &["workspace", "list"]);
+
+    let workspaces = ws_json
+        .as_deref()
+        .map(parse_workspaces)
+        .unwrap_or_default();
+
+    let workspace_labels = ws_json
+        .as_deref()
+        .map(parse_workspace_labels)
         .unwrap_or_default();
 
     let agents = fetch_json(&herdr, &["agent", "list"])
-        .map(|json| parse_agents(&json))
+        .map(|json| parse_agents(&json, &workspace_labels))
         .unwrap_or_default();
 
     let items = assign_labels(workspaces, agents);

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,6 +16,7 @@ pub struct HintItem {
     pub display_name: String,
     pub status: String,
     pub focused: bool,
+    pub workspace_label: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -42,6 +45,7 @@ struct AgentInfo {
     name: Option<String>,
     agent: Option<String>,
     agent_status: String,
+    workspace_id: String,
     focused: bool,
 }
 
@@ -57,13 +61,25 @@ pub fn parse_workspaces(json: &str) -> Vec<HintItem> {
                 display_name: w.label,
                 status: w.agent_status,
                 focused: w.focused,
+                workspace_label: None,
             })
             .collect(),
         _ => panic!("expected workspace_list"),
     }
 }
 
-pub fn parse_agents(json: &str) -> Vec<HintItem> {
+pub fn parse_workspace_labels(json: &str) -> HashMap<String, String> {
+    let resp: CliResponse = serde_json::from_str(json).expect("failed to parse workspace list");
+    match resp.result {
+        ResultPayload::WorkspaceList { workspaces } => workspaces
+            .into_iter()
+            .map(|w| (w.workspace_id, w.label))
+            .collect(),
+        _ => panic!("expected workspace_list"),
+    }
+}
+
+pub fn parse_agents(json: &str, workspace_labels: &HashMap<String, String>) -> Vec<HintItem> {
     let resp: CliResponse = serde_json::from_str(json).expect("failed to parse agent list");
     match resp.result {
         ResultPayload::AgentList { agents } => agents
@@ -73,6 +89,7 @@ pub fn parse_agents(json: &str) -> Vec<HintItem> {
                     .name
                     .or(a.agent)
                     .unwrap_or_else(|| a.terminal_id.clone());
+                let workspace_label = workspace_labels.get(&a.workspace_id).cloned();
                 HintItem {
                     label: ' ',
                     kind: HintKind::Agent,
@@ -80,6 +97,7 @@ pub fn parse_agents(json: &str) -> Vec<HintItem> {
                     display_name,
                     status: a.agent_status,
                     focused: a.focused,
+                    workspace_label,
                 }
             })
             .collect(),
@@ -123,7 +141,8 @@ pub fn render(items: &[HintItem]) -> String {
         out.push_str(" Agents\r\n\r\n");
         for item in &agents {
             let marker = if item.focused { "*" } else { " " };
-            out.push_str(&format!(" {marker} [{label}]  {name}  ({status})\r\n",
+            let ws = item.workspace_label.as_deref().unwrap_or("");
+            out.push_str(&format!(" {marker} [{label}]  {name}  {ws}  ({status})\r\n",
                 label = item.label,
                 name = item.display_name,
                 status = item.status,
@@ -196,6 +215,7 @@ mod tests {
                 display_name: "herdr".into(),
                 status: "working".into(),
                 focused: true,
+                workspace_label: None,
             },
         ];
         let agents = vec![
@@ -206,6 +226,7 @@ mod tests {
                 display_name: "claude".into(),
                 status: "idle".into(),
                 focused: false,
+                workspace_label: None,
             },
             HintItem {
                 label: ' ',
@@ -214,6 +235,7 @@ mod tests {
                 display_name: "codex".into(),
                 status: "working".into(),
                 focused: false,
+                workspace_label: None,
             },
         ];
 
@@ -237,6 +259,7 @@ mod tests {
                 display_name: format!("workspace-{i}"),
                 status: "idle".into(),
                 focused: false,
+                workspace_label: None,
             })
             .collect();
 
@@ -257,6 +280,7 @@ mod tests {
                 display_name: "herdr".into(),
                 status: "working".into(),
                 focused: true,
+                workspace_label: None,
             },
             HintItem {
                 label: 'b',
@@ -265,6 +289,7 @@ mod tests {
                 display_name: "claude".into(),
                 status: "idle".into(),
                 focused: false,
+                workspace_label: None,
             },
         ];
 
@@ -281,6 +306,7 @@ mod tests {
             display_name: "herdr".into(),
             status: "idle".into(),
             focused: false,
+            workspace_label: None,
         }];
 
         assert!(resolve_input(&items, 'z').is_none());
@@ -296,6 +322,7 @@ mod tests {
                 display_name: "herdr".into(),
                 status: "working".into(),
                 focused: true,
+                workspace_label: None,
             },
             HintItem {
                 label: 'b',
@@ -304,6 +331,7 @@ mod tests {
                 display_name: "claude".into(),
                 status: "idle".into(),
                 focused: false,
+                workspace_label: Some("herdr".into()),
             },
         ];
 
@@ -317,57 +345,67 @@ mod tests {
     }
 
     #[test]
-    fn parse_agent_list() {
-        let json = r#"{
+    fn parse_agent_list_with_workspace_labels() {
+        let ws_json = r#"{
+            "id": "cli:workspace:list",
+            "result": {
+                "type": "workspace_list",
+                "workspaces": [
+                    { "workspace_id": "ws-1", "number": 1, "label": "herdr", "focused": true, "pane_count": 2, "tab_count": 1, "active_tab_id": "t1", "agent_status": "working" },
+                    { "workspace_id": "ws-2", "number": 2, "label": "ga-pms", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "t2", "agent_status": "idle" }
+                ]
+            }
+        }"#;
+        let ag_json = r#"{
             "id": "cli:agent:list",
             "result": {
                 "type": "agent_list",
                 "agents": [
-                    {
-                        "terminal_id": "term-1",
-                        "name": "my-agent",
-                        "agent": "claude-code",
-                        "agent_status": "working",
-                        "workspace_id": "ws-1",
-                        "tab_id": "tab-1",
-                        "pane_id": "pane-1",
-                        "focused": true,
-                        "screen_detection_skipped": false,
-                        "revision": 1
-                    },
-                    {
-                        "terminal_id": "term-2",
-                        "name": null,
-                        "agent": "codex",
-                        "agent_status": "idle",
-                        "workspace_id": "ws-1",
-                        "tab_id": "tab-1",
-                        "pane_id": "pane-2",
-                        "focused": false,
-                        "screen_detection_skipped": false,
-                        "revision": 2
-                    },
-                    {
-                        "terminal_id": "term-3",
-                        "name": null,
-                        "agent": null,
-                        "agent_status": "unknown",
-                        "workspace_id": "ws-2",
-                        "tab_id": "tab-2",
-                        "pane_id": "pane-3",
-                        "focused": false,
-                        "screen_detection_skipped": false,
-                        "revision": 3
-                    }
+                    { "terminal_id": "term-1", "name": "my-agent", "agent": "claude-code", "agent_status": "working", "workspace_id": "ws-1", "tab_id": "t1", "pane_id": "p1", "focused": true, "screen_detection_skipped": false, "revision": 1 },
+                    { "terminal_id": "term-2", "name": null, "agent": "claude", "agent_status": "idle", "workspace_id": "ws-1", "tab_id": "t1", "pane_id": "p2", "focused": false, "screen_detection_skipped": false, "revision": 2 },
+                    { "terminal_id": "term-3", "name": null, "agent": "claude", "agent_status": "idle", "workspace_id": "ws-2", "tab_id": "t2", "pane_id": "p3", "focused": false, "screen_detection_skipped": false, "revision": 3 }
                 ]
             }
         }"#;
 
-        let items = parse_agents(json);
+        let workspace_labels = parse_workspace_labels(ws_json);
+        let items = parse_agents(ag_json, &workspace_labels);
 
         assert_eq!(items.len(), 3);
         assert_eq!(items[0].display_name, "my-agent");
-        assert_eq!(items[1].display_name, "codex");
-        assert_eq!(items[2].display_name, "term-3");
+        assert_eq!(items[0].workspace_label, Some("herdr".into()));
+        assert_eq!(items[1].display_name, "claude");
+        assert_eq!(items[1].workspace_label, Some("herdr".into()));
+        assert_eq!(items[2].display_name, "claude");
+        assert_eq!(items[2].workspace_label, Some("ga-pms".into()));
+    }
+
+    #[test]
+    fn render_agents_shows_workspace_label() {
+        let items = vec![
+            HintItem {
+                label: 'a',
+                kind: HintKind::Agent,
+                target_id: "term-1".into(),
+                display_name: "claude".into(),
+                status: "idle".into(),
+                focused: false,
+                workspace_label: Some("herdr".into()),
+            },
+            HintItem {
+                label: 'b',
+                kind: HintKind::Agent,
+                target_id: "term-2".into(),
+                display_name: "claude".into(),
+                status: "idle".into(),
+                focused: false,
+                workspace_label: Some("ga-pms".into()),
+            },
+        ];
+
+        let output = render(&items);
+
+        assert!(output.contains("claude  herdr"));
+        assert!(output.contains("claude  ga-pms"));
     }
 }
