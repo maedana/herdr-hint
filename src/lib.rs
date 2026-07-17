@@ -143,13 +143,19 @@ pub fn git_context(cwd: &str) -> Option<String> {
 pub fn assign_labels(tabs: Vec<HintItem>, agents: Vec<HintItem>) -> Vec<HintItem> {
     tabs.into_iter()
         .chain(agents)
-        .take(26)
         .enumerate()
         .map(|(i, mut item)| {
-            item.label = (b'a' + i as u8) as char;
+            if i < 26 {
+                item.label = (b'a' + i as u8) as char;
+            }
             item
         })
         .collect()
+}
+
+fn tab_cell(item: &HintItem) -> String {
+    let marker = if item.focused { "*" } else { " " };
+    format!("{marker} [{label}]  {name}", label = item.label, name = item.display_name)
 }
 
 pub fn render(items: &[HintItem]) -> String {
@@ -159,35 +165,68 @@ pub fn render(items: &[HintItem]) -> String {
     let agents: Vec<_> = items.iter().filter(|i| i.kind == HintKind::Agent).collect();
 
     if !tabs.is_empty() {
-        let mut current_group: Option<&str> = None;
+        let mut groups: Vec<(&str, Vec<&HintItem>)> = Vec::new();
         for item in &tabs {
             let group = item.group.as_deref().unwrap_or("?");
-            if current_group != Some(group) {
-                if current_group.is_some() {
-                    out.push_str("\r\n");
+            if let Some(last) = groups.last_mut() {
+                if last.0 == group {
+                    last.1.push(item);
+                    continue;
                 }
-                out.push_str(&format!(" {group}\r\n"));
-                current_group = Some(group);
             }
-            let marker = if item.focused { "*" } else { " " };
-            out.push_str(&format!("   {marker} [{label}]  {name}\r\n",
-                label = item.label,
-                name = item.display_name,
-            ));
+            groups.push((group, vec![item]));
+        }
+
+        for (i, (group, group_tabs)) in groups.iter().enumerate() {
+            if i > 0 {
+                out.push_str("\r\n");
+            }
+            out.push_str(&format!(" {group}\r\n"));
+
+            let col_width = group_tabs.iter()
+                .map(|item| tab_cell(item).len())
+                .max()
+                .unwrap_or(0) + 2;
+
+            for chunk in group_tabs.chunks(2) {
+                let cell1 = tab_cell(chunk[0]);
+                if let Some(second) = chunk.get(1) {
+                    let cell2 = tab_cell(second);
+                    out.push_str(&format!("   {cell1:<col_width$}{cell2}\r\n"));
+                } else {
+                    out.push_str(&format!("   {cell1}\r\n"));
+                }
+            }
         }
         out.push_str("\r\n");
     }
 
     if !agents.is_empty() {
         out.push_str(" Agents\r\n");
-        for item in &agents {
+
+        let agent_cell = |item: &HintItem| -> String {
             let marker = if item.focused { "*" } else { " " };
             let ctx = item.context.as_deref().unwrap_or("");
-            out.push_str(&format!("   {marker} [{label}]  {name}  {ctx}  ({status})\r\n",
+            format!("{marker} [{label}]  {name}  {ctx}  ({status})",
                 label = item.label,
                 name = item.display_name,
                 status = item.status,
-            ));
+            )
+        };
+
+        let col_width = agents.iter()
+            .map(|item| agent_cell(item).len())
+            .max()
+            .unwrap_or(0) + 2;
+
+        for chunk in agents.chunks(2) {
+            let cell1 = agent_cell(chunk[0]);
+            if let Some(second) = chunk.get(1) {
+                let cell2 = agent_cell(second);
+                out.push_str(&format!("   {cell1:<col_width$}{cell2}\r\n"));
+            } else {
+                out.push_str(&format!("   {cell1}\r\n"));
+            }
         }
     }
 
@@ -290,9 +329,24 @@ mod tests {
 
         let items = assign_labels(tabs, vec![]);
 
-        assert_eq!(items.len(), 26);
+        assert_eq!(items.len(), 30);
         assert_eq!(items[0].label, 'a');
         assert_eq!(items[25].label, 'z');
+        assert_eq!(items[26].label, ' ');
+    }
+
+    #[test]
+    fn assign_labels_agents_shown_without_label() {
+        let tabs: Vec<HintItem> = (0..26)
+            .map(|i| tab(&format!("t-{i}"), &format!("{i}"), "ws", false))
+            .collect();
+        let agents = vec![agent("term-1", "claude", "idle", None)];
+
+        let items = assign_labels(tabs, agents);
+
+        assert_eq!(items.len(), 27);
+        assert_eq!(items[26].label, ' ');
+        assert_eq!(items[26].kind, HintKind::Agent);
     }
 
     #[test]
@@ -362,6 +416,41 @@ mod tests {
     }
 
     #[test]
+    fn render_tabs_in_two_columns() {
+        let items = vec![
+            HintItem { label: 'a', ..tab("w7:t1", "1", "herdr", true) },
+            HintItem { label: 'b', ..tab("w7:t2", "2", "herdr", false) },
+            HintItem { label: 'c', ..tab("w7:t3", "3", "herdr", false) },
+            HintItem { label: 'd', ..tab("w7:t4", "4", "herdr", false) },
+        ];
+
+        let output = render(&items);
+        let lines: Vec<&str> = output.split("\r\n").collect();
+
+        let row1 = lines.iter().find(|l| l.contains("[a]")).unwrap();
+        assert!(row1.contains("[b]"), "First row should contain both [a] and [b]");
+        let row2 = lines.iter().find(|l| l.contains("[c]")).unwrap();
+        assert!(row2.contains("[d]"), "Second row should contain both [c] and [d]");
+    }
+
+    #[test]
+    fn render_tabs_two_columns_odd_count() {
+        let items = vec![
+            HintItem { label: 'a', ..tab("w7:t1", "1", "herdr", false) },
+            HintItem { label: 'b', ..tab("w7:t2", "2", "herdr", false) },
+            HintItem { label: 'c', ..tab("w7:t3", "3", "herdr", false) },
+        ];
+
+        let output = render(&items);
+        let lines: Vec<&str> = output.split("\r\n").collect();
+
+        let row1 = lines.iter().find(|l| l.contains("[a]")).unwrap();
+        assert!(row1.contains("[b]"), "First row should contain both [a] and [b]");
+        let row2 = lines.iter().find(|l| l.contains("[c]")).unwrap();
+        assert!(!row2.contains("[a]") && !row2.contains("[b]"), "[c] should be alone");
+    }
+
+    #[test]
     fn render_agents_shows_context() {
         let items = vec![
             HintItem { label: 'a', ..agent("term-1", "claude", "idle", Some("herdr:main")) },
@@ -372,5 +461,22 @@ mod tests {
 
         assert!(output.contains("claude  herdr:main"));
         assert!(output.contains("claude  ga-pms:feature"));
+    }
+
+    #[test]
+    fn render_agents_in_two_columns() {
+        let items = vec![
+            HintItem { label: 'a', ..agent("term-1", "claude", "idle", Some("herdr:main")) },
+            HintItem { label: 'b', ..agent("term-2", "claude", "working", Some("ga-pms:feat")) },
+            HintItem { label: 'c', ..agent("term-3", "codex", "idle", None) },
+        ];
+
+        let output = render(&items);
+        let lines: Vec<&str> = output.split("\r\n").collect();
+
+        let row1 = lines.iter().find(|l| l.contains("[a]")).unwrap();
+        assert!(row1.contains("[b]"), "First row should contain both [a] and [b]");
+        let row2 = lines.iter().find(|l| l.contains("[c]")).unwrap();
+        assert!(!row2.contains("[a]") && !row2.contains("[b]"), "[c] should be alone");
     }
 }

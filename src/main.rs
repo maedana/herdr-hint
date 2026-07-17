@@ -49,7 +49,7 @@ fn main() {
 
     terminal::enable_raw_mode().expect("failed to enable raw mode");
 
-    print!("\x1b[2J\x1b[H");
+    print!("\x1b[?25l\x1b[2J\x1b[H");
     print!("{output}");
     io::stdout().flush().unwrap();
 
@@ -63,6 +63,8 @@ fn main() {
         }
     };
 
+    print!("\x1b[?25h");
+    io::stdout().flush().unwrap();
     terminal::disable_raw_mode().expect("failed to disable raw mode");
 
     if let Some(item) = selected {
