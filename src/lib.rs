@@ -16,6 +16,7 @@ pub struct HintItem {
     pub focused: bool,
     pub context: Option<String>,
     pub group: Option<String>,
+    pub title: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +54,7 @@ struct AgentInfo {
     agent_status: String,
     cwd: Option<String>,
     focused: bool,
+    terminal_title_stripped: Option<String>,
 }
 
 pub fn parse_workspace_labels(json: &str) -> Vec<(String, String)> {
@@ -85,6 +87,7 @@ pub fn parse_tabs(json: &str, workspace_labels: &[(String, String)]) -> Vec<Hint
                     focused: t.focused,
                     context: None,
                     group,
+                    title: None,
                 }
             })
             .collect(),
@@ -112,6 +115,7 @@ pub fn parse_agents(json: &str, resolve_context: &dyn Fn(&str) -> Option<String>
                     focused: a.focused,
                     context,
                     group: None,
+                    title: a.terminal_title_stripped,
                 }
             })
             .collect(),
@@ -216,30 +220,20 @@ pub fn render(items: &[HintItem]) -> String {
 
     if !agents.is_empty() {
         out.push_str(" Agents\r\n");
-
-        let agent_cell = |item: &HintItem| -> String {
+        let status_width = agents.iter().map(|i| i.status.len()).max().unwrap_or(0);
+        for item in &agents {
             let marker = if item.focused { "*" } else { " " };
             let ctx = item.context.as_deref().unwrap_or("");
-            format!("{marker} [{label}]  {name}  {ctx}  ({status})",
-                label = item.label,
-                name = item.display_name,
-                status = item.status,
-            )
-        };
-
-        let col_width = agents.iter()
-            .map(|item| agent_cell(item).len())
-            .max()
-            .unwrap_or(0) + 2;
-
-        for chunk in agents.chunks(2) {
-            let cell1 = agent_cell(chunk[0]);
-            if let Some(second) = chunk.get(1) {
-                let cell2 = agent_cell(second);
-                out.push_str(&format!("   {cell1:<col_width$}{cell2}\r\n"));
+            let title = item.title.as_deref().unwrap_or("");
+            let dim_title = if title.is_empty() {
+                String::new()
             } else {
-                out.push_str(&format!("   {cell1}\r\n"));
-            }
+                format!("\x1b[2m{title}\x1b[0m")
+            };
+            out.push_str(&format!("   {marker} [{label}]  {status:<status_width$}  {ctx}  {dim_title}\r\n",
+                status = item.status,
+                label = item.label,
+            ));
         }
     }
 
@@ -268,6 +262,7 @@ mod tests {
             focused,
             context: None,
             group: Some(group.into()),
+            title: None,
         }
     }
 
@@ -281,6 +276,7 @@ mod tests {
             focused: false,
             context: context.map(Into::into),
             group: None,
+            title: None,
         }
     }
 
@@ -403,7 +399,9 @@ mod tests {
         assert!(output.contains(" ga-pms\r\n"));
         assert!(output.contains("[c]  1"));
         assert!(output.contains("Agents"));
-        assert!(output.contains("     [d]  claude  herdr:main  (working)"));
+        assert!(output.contains("working"));
+        assert!(output.contains("[d]"));
+        assert!(output.contains("herdr:main"));
     }
 
     #[test]
@@ -413,7 +411,7 @@ mod tests {
             "result": {
                 "type": "agent_list",
                 "agents": [
-                    { "terminal_id": "term-1", "name": "my-agent", "agent": "claude-code", "agent_status": "working", "cwd": "/home/user/repo-a", "workspace_id": "ws-1", "tab_id": "t1", "pane_id": "p1", "focused": true, "screen_detection_skipped": false, "revision": 1 },
+                    { "terminal_id": "term-1", "name": "my-agent", "agent": "claude-code", "agent_status": "working", "cwd": "/home/user/repo-a", "workspace_id": "ws-1", "tab_id": "t1", "pane_id": "p1", "focused": true, "screen_detection_skipped": false, "revision": 1, "terminal_title_stripped": "Fix login bug" },
                     { "terminal_id": "term-2", "name": null, "agent": "claude", "agent_status": "idle", "cwd": "/home/user/repo-b", "workspace_id": "ws-1", "tab_id": "t1", "pane_id": "p2", "focused": false, "screen_detection_skipped": false, "revision": 2 }
                 ]
             }
@@ -431,8 +429,10 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].display_name, "my-agent");
         assert_eq!(items[0].context, Some("repo-a:main".into()));
+        assert_eq!(items[0].title, Some("Fix login bug".into()));
         assert_eq!(items[1].display_name, "claude");
         assert_eq!(items[1].context, Some("repo-b:feature".into()));
+        assert_eq!(items[1].title, None);
     }
 
     #[test]
@@ -471,32 +471,28 @@ mod tests {
     }
 
     #[test]
-    fn render_agents_shows_context() {
+    fn render_agents_single_line_with_status_and_title() {
+        let mut a1 = agent("term-1", "claude", "idle", Some("herdr:main"));
+        a1.title = Some("Fix login bug".into());
+        let mut a2 = agent("term-2", "claude", "working", Some("ga-pms:feat"));
+        a2.title = Some("Add feature".into());
+        a2.focused = true;
         let items = vec![
-            HintItem { label: "a".into(), ..agent("term-1", "claude", "idle", Some("herdr:main")) },
-            HintItem { label: "b".into(), ..agent("term-2", "claude", "idle", Some("ga-pms:feature")) },
+            HintItem { label: "a".into(), ..a1 },
+            HintItem { label: "b".into(), ..a2 },
         ];
 
         let output = render(&items);
+        let line_a = output.split("\r\n").find(|l| l.contains("[a]")).unwrap();
+        let line_b = output.split("\r\n").find(|l| l.contains("[b]")).unwrap();
 
-        assert!(output.contains("claude  herdr:main"));
-        assert!(output.contains("claude  ga-pms:feature"));
-    }
+        assert!(line_a.contains("idle"));
+        assert!(line_a.contains("herdr:main"));
+        assert!(line_a.contains("Fix login bug"));
+        assert!(!line_a.contains("claude"));
 
-    #[test]
-    fn render_agents_in_two_columns() {
-        let items = vec![
-            HintItem { label: "a".into(), ..agent("term-1", "claude", "idle", Some("herdr:main")) },
-            HintItem { label: "b".into(), ..agent("term-2", "claude", "working", Some("ga-pms:feat")) },
-            HintItem { label: "c".into(), ..agent("term-3", "codex", "idle", None) },
-        ];
-
-        let output = render(&items);
-        let lines: Vec<&str> = output.split("\r\n").collect();
-
-        let row1 = lines.iter().find(|l| l.contains("[a]")).unwrap();
-        assert!(row1.contains("[b]"), "First row should contain both [a] and [b]");
-        let row2 = lines.iter().find(|l| l.contains("[c]")).unwrap();
-        assert!(!row2.contains("[a]") && !row2.contains("[b]"), "[c] should be alone");
+        assert!(line_b.contains("working"));
+        assert!(line_b.contains("ga-pms:feat"));
+        assert!(line_b.contains("Add feature"));
     }
 }
