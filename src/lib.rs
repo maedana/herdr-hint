@@ -48,7 +48,7 @@ struct TabInfo {
 
 #[derive(Deserialize)]
 struct AgentInfo {
-    terminal_id: String,
+    pane_id: String,
     name: Option<String>,
     agent: Option<String>,
     agent_status: String,
@@ -104,12 +104,12 @@ pub fn parse_agents(json: &str, resolve_context: &dyn Fn(&str) -> Option<String>
                 let display_name = a
                     .name
                     .or(a.agent)
-                    .unwrap_or_else(|| a.terminal_id.clone());
+                    .unwrap_or_else(|| a.pane_id.clone());
                 let context = a.cwd.as_deref().and_then(|cwd| resolve_context(cwd));
                 HintItem {
                     label: String::new(),
                     kind: HintKind::Agent,
-                    target_id: a.terminal_id,
+                    target_id: a.pane_id,
                     display_name,
                     status: a.agent_status,
                     focused: a.focused,
@@ -436,8 +436,8 @@ mod tests {
             "result": {
                 "type": "agent_list",
                 "agents": [
-                    { "terminal_id": "term-1", "name": "my-agent", "agent": "claude-code", "agent_status": "working", "cwd": "/home/user/repo-a", "workspace_id": "ws-1", "tab_id": "t1", "pane_id": "p1", "focused": true, "screen_detection_skipped": false, "revision": 1, "terminal_title_stripped": "Fix login bug" },
-                    { "terminal_id": "term-2", "name": null, "agent": "claude", "agent_status": "idle", "cwd": "/home/user/repo-b", "workspace_id": "ws-1", "tab_id": "t1", "pane_id": "p2", "focused": false, "screen_detection_skipped": false, "revision": 2 }
+                    { "terminal_id": "term-1", "name": "my-agent", "agent": "claude-code", "agent_status": "working", "cwd": "/home/user/repo-a", "workspace_id": "ws-1", "tab_id": "t1", "pane_id": "ws-1:p1", "focused": true, "screen_detection_skipped": false, "revision": 1, "terminal_title_stripped": "Fix login bug" },
+                    { "terminal_id": "term-2", "name": null, "agent": "claude", "agent_status": "idle", "cwd": "/home/user/repo-b", "workspace_id": "ws-1", "tab_id": "t1", "pane_id": "ws-1:p2", "focused": false, "screen_detection_skipped": false, "revision": 2 }
                 ]
             }
         }"#;
@@ -452,9 +452,12 @@ mod tests {
         let items = parse_agents(ag_json, &resolver);
 
         assert_eq!(items.len(), 2);
+
+        assert_eq!(items[0].target_id, "ws-1:p1");
         assert_eq!(items[0].display_name, "my-agent");
         assert_eq!(items[0].context, Some("repo-a:main".into()));
         assert_eq!(items[0].title, Some("Fix login bug".into()));
+        assert_eq!(items[1].target_id, "ws-1:p2");
         assert_eq!(items[1].display_name, "claude");
         assert_eq!(items[1].context, Some("repo-b:feature".into()));
         assert_eq!(items[1].title, None);
